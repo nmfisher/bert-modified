@@ -171,7 +171,6 @@ class SquadExample(object):
                question_start_position=None,
                question_end_position=None,
                is_impossible=False):
-    print(question_tokens)
     self.qas_id = qas_id
     self.question_text = question_text
     self.context_tokens = context_tokens
@@ -294,39 +293,40 @@ def read_squad_examples(input_file, is_training):
         answer_end_position = None
         orig_answer_text = None
         is_impossible = False
-        if is_training:
-          if FLAGS.version_2_with_negative:
-            is_impossible = qa["is_impossible"]
-          if (len(qa["answers"]) != 1) and (not is_impossible):
-            raise ValueError(
-                "For training, each question should have exactly 1 answer.")
-          if not is_impossible:
-            answer = qa["answers"][0]
-            orig_answer_text = answer["text"]
-            answer_offset = answer["answer_start"]
-            answer_start_position, answer_end_position = can_find(answer["text"], answer["answer_start"], len(answer["text"]), context_tokens, context_char_to_word_offset)
-            question_start_position, question_end_position = can_find(question_component_text, question_component_offset, len(question_component_text), question_tokens, question_char_to_word_offset)
-            if answer_start_position is None or question_start_position is None:
-              continue
-          else:
-            answer_start_position = -1
-            answer_end_position = -1
-            orig_answer_text = ""
+        if FLAGS.version_2_with_negative:
+          is_impossible = qa["is_impossible"]
+        if (len(qa["answers"]) != 1) and (not is_impossible):
+          raise ValueError(
+              "For training, each question should have exactly 1 answer.")
+        if not is_impossible:
+          answer = qa["answers"][0]
+          orig_answer_text = answer["text"]
+          answer_offset = answer["answer_start"]
+          answer_start_position, answer_end_position = can_find(answer["text"], answer["answer_start"], len(answer["text"]), context_tokens, context_char_to_word_offset)
+          question_start_position, question_end_position = can_find(question_component_text, question_component_offset, len(question_component_text), question_tokens, question_char_to_word_offset)
+          if answer_start_position is None or question_start_position is None:
+            continue
+        else:
+          answer_start_position = -1
+          answer_end_position = -1
+          orig_answer_text = ""
         if answer_start_position is None:
-          print(qa)
+          print(paragraph)
           raise Exception()
         
         example = SquadExample(
             qas_id=qas_id,
             question_text=question_text,
             context_tokens=context_tokens,
+            question_start_position=question_start_position,
+            question_end_position=question_end_position,
             question_tokens=question_tokens,
             orig_answer_text=orig_answer_text,
             answer_start_position=answer_start_position,
             answer_end_position=answer_end_position,
             is_impossible=is_impossible)
         examples.append(example)
-
+  print("EXAMPLES {0}".format(len(examples)))
   return examples
 
 
@@ -414,9 +414,10 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
 
       input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
-      # The mask has 1 for real tokens and 0 for padding tokens. Only real
-      # tokens are attended to.
-      input_mask = [1] * len(input_ids)
+      # The mask has 1 for the component in the question we want to attend to, and 0 elsewhere
+      input_mask = [1 if i >= example.question_start_position and i <= example.question_end_position else 0 for i in range(len(input_ids))]
+
+      print(input_mask)
 
       # Zero-pad up to the sequence length.
       while len(input_ids) < max_seq_length:
@@ -585,6 +586,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
   final_hidden = model.get_sequence_output()
 
   final_hidden_shape = modeling.get_shape_list(final_hidden, expected_rank=3)
+
   batch_size = final_hidden_shape[0]
   seq_length = final_hidden_shape[1]
   hidden_size = final_hidden_shape[2]
