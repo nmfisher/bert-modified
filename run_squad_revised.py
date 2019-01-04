@@ -171,9 +171,11 @@ class SquadExample(object):
                question_start_position=None,
                question_end_position=None,
                is_impossible=False):
+    print(question_tokens)
     self.qas_id = qas_id
     self.question_text = question_text
     self.context_tokens = context_tokens
+    self.question_tokens = question_tokens
     self.orig_answer_text = orig_answer_text
     self.answer_start_position = answer_start_position
     self.answer_end_position = answer_end_position
@@ -279,8 +281,8 @@ def read_squad_examples(input_file, is_training):
           if actual_text.find(cleaned_answer_text) == -1:
               tf.logging.warning("Could not find answer: '%s' vs. '%s'",
                                  actual_text, cleaned_answer_text)
-              return False
-          return True
+              return None,None
+          return start_position,end_position
 
 
       for qa in paragraph["qas"]:
@@ -302,13 +304,18 @@ def read_squad_examples(input_file, is_training):
             answer = qa["answers"][0]
             orig_answer_text = answer["text"]
             answer_offset = answer["answer_start"]
-            if not can_find(answer["text"], answer["answer_start"], len(answer["text"]), context_tokens, context_char_to_word_offset) or not can_find(question_component_text, question_component_offset, len(question_component_text), question_tokens, question_char_to_word_offset):
+            answer_start_position, answer_end_position = can_find(answer["text"], answer["answer_start"], len(answer["text"]), context_tokens, context_char_to_word_offset)
+            question_start_position, question_end_position = can_find(question_component_text, question_component_offset, len(question_component_text), question_tokens, question_char_to_word_offset)
+            if answer_start_position is None or question_start_position is None:
               continue
           else:
             answer_start_position = -1
             answer_end_position = -1
             orig_answer_text = ""
-
+        if answer_start_position is None:
+          print(qa)
+          raise Exception()
+        
         example = SquadExample(
             qas_id=qas_id,
             question_text=question_text,
