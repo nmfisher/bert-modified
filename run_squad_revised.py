@@ -176,6 +176,8 @@ class SquadExample(object):
     self.orig_answer_text = orig_answer_text
     self.answer_start_position = answer_start_position
     self.answer_end_position = answer_end_position
+    self.question_start_position = question_start_position
+    self.question_end_position = question_end_position
     self.is_impossible = is_impossible
 
   def __str__(self):
@@ -254,6 +256,24 @@ def read_squad_examples(input_file, is_training):
           prev_is_whitespace = False
         char_to_word_offset.append(len(doc_tokens) - 1)
 
+      def can_find(text, offset, length):
+          start_position = char_to_word_offset[offset]
+          end_position = char_to_word_offset[offset + length - 1]
+            # Only add answers where the text can be exactly recovered from the
+            # document. If this CAN'T happen it's likely due to weird Unicode
+            # stuff so we will just skip the example.
+            #
+            # Note that this means for training mode, every example is NOT
+            # guaranteed to be preserved.
+          actual_text = " ".join(
+                doc_tokens[start_position:(end_position + 1)])
+          cleaned_answer_text = " ".join(
+                tokenization.whitespace_tokenize(text))
+          if actual_text.find(cleaned_answer_text) == -1:
+              tf.logging.warning("Could not find answer: '%s' vs. '%s'",
+                                 actual_text, cleaned_answer_text)
+
+
       for qa in paragraph["qas"]:
         qas_id = qa["id"]
         question_text = qa["question"]
@@ -272,23 +292,7 @@ def read_squad_examples(input_file, is_training):
             answer = qa["answers"][0]
             orig_answer_text = answer["text"]
             answer_offset = answer["answer_start"]
-            answer_length = len(orig_answer_text)
-            answer_start_position = char_to_word_offset[answer_offset]
-            answer_end_position = char_to_word_offset[answer_offset + answer_length -
-                                               1]
-            # Only add answers where the text can be exactly recovered from the
-            # document. If this CAN'T happen it's likely due to weird Unicode
-            # stuff so we will just skip the example.
-            #
-            # Note that this means for training mode, every example is NOT
-            # guaranteed to be preserved.
-            actual_text = " ".join(
-                doc_tokens[answer_start_position:(answer_end_position + 1)])
-            cleaned_answer_text = " ".join(
-                tokenization.whitespace_tokenize(orig_answer_text))
-            if actual_text.find(cleaned_answer_text) == -1:
-              tf.logging.warning("Could not find answer: '%s' vs. '%s'",
-                                 actual_text, cleaned_answer_text)
+            if not can_find(answer["text"], answer["answer_start"], len(answer["text"])):
               continue
           else:
             answer_start_position = -1
