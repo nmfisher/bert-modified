@@ -163,7 +163,8 @@ class SquadExample(object):
   def __init__(self,
                qas_id,
                question_text,
-               doc_tokens,
+               context_tokens,
+               question_tokens,
                orig_answer_text=None,
                answer_start_position=None,
                answer_end_position=None,
@@ -172,7 +173,7 @@ class SquadExample(object):
                is_impossible=False):
     self.qas_id = qas_id
     self.question_text = question_text
-    self.doc_tokens = doc_tokens
+    self.context_tokens = context_tokens
     self.orig_answer_text = orig_answer_text
     self.answer_start_position = answer_start_position
     self.answer_end_position = answer_end_position
@@ -188,7 +189,7 @@ class SquadExample(object):
     s += "qas_id: %s" % (tokenization.printable_text(self.qas_id))
     s += ", question_text: %s" % (
         tokenization.printable_text(self.question_text))
-    s += ", doc_tokens: [%s]" % (" ".join(self.doc_tokens))
+    s += ", context_tokens: [%s]" % (" ".join(self.context_tokens))
     if self.answer_start_position:
       s += ", answer_start_position: %d" % (self.answer_start_position)
     if self.answer_start_position:
@@ -238,25 +239,31 @@ def read_squad_examples(input_file, is_training):
       return True
     return False
 
-  examples = []
-  for entry in input_data:
-    for paragraph in entry["paragraphs"]:
-      paragraph_text = paragraph["context"]
-      doc_tokens = []
-      char_to_word_offset = []
+  def build_char_to_word(text):
       prev_is_whitespace = True
-      for c in paragraph_text:
+      char_to_word_offset = []
+      tokens = []
+      for c in text:
         if is_whitespace(c):
           prev_is_whitespace = True
         else:
           if prev_is_whitespace:
-            doc_tokens.append(c)
+            tokens.append(c)
           else:
-            doc_tokens[-1] += c
+            tokens[-1] += c
           prev_is_whitespace = False
-        char_to_word_offset.append(len(doc_tokens) - 1)
+        char_to_word_offset.append(len(tokens) - 1)
+      return tokens, char_to_word_offset
 
-      def can_find(text, offset, length):
+
+  examples = []
+  for entry in input_data:
+    for paragraph in entry["paragraphs"]:
+      paragraph_text = paragraph["context"]
+      context_tokens, context_char_to_word_offset = build_char_to_word(paragraph_text)
+      question_tokens, question_char_to_word_offset = build_char_to_word(paragraph["qas"][0]["question"])
+
+      def can_find(text, offset, length, tokens, char_to_word_offset):
           start_position = char_to_word_offset[offset]
           end_position = char_to_word_offset[offset + length - 1]
             # Only add answers where the text can be exactly recovered from the
@@ -266,23 +273,26 @@ def read_squad_examples(input_file, is_training):
             # Note that this means for training mode, every example is NOT
             # guaranteed to be preserved.
           actual_text = " ".join(
-                doc_tokens[start_position:(end_position + 1)])
+                tokens[start_position:(end_position + 1)])
           cleaned_answer_text = " ".join(
                 tokenization.whitespace_tokenize(text))
           if actual_text.find(cleaned_answer_text) == -1:
               tf.logging.warning("Could not find answer: '%s' vs. '%s'",
                                  actual_text, cleaned_answer_text)
+              return False
+          return True
 
 
       for qa in paragraph["qas"]:
         qas_id = qa["id"]
         question_text = qa["question"]
+        question_component_offset = qa["question_component_offset"]
+        question_component_text = qa["question_component_text"]
         answer_start_position = None
         answer_end_position = None
         orig_answer_text = None
         is_impossible = False
         if is_training:
-
           if FLAGS.version_2_with_negative:
             is_impossible = qa["is_impossible"]
           if (len(qa["answers"]) != 1) and (not is_impossible):
@@ -292,7 +302,7 @@ def read_squad_examples(input_file, is_training):
             answer = qa["answers"][0]
             orig_answer_text = answer["text"]
             answer_offset = answer["answer_start"]
-            if not can_find(answer["text"], answer["answer_start"], len(answer["text"])):
+            if not can_find(answer["text"], answer["answer_start"], len(answer["text"]), context_tokens, context_char_to_word_offset) or not can_find(question_component_text, question_component_offset, len(question_component_text), question_tokens, question_char_to_word_offset):
               continue
           else:
             answer_start_position = -1
@@ -302,7 +312,8 @@ def read_squad_examples(input_file, is_training):
         example = SquadExample(
             qas_id=qas_id,
             question_text=question_text,
-            doc_tokens=doc_tokens,
+            context_tokens=context_tokens,
+            question_tokens=question_tokens,
             orig_answer_text=orig_answer_text,
             answer_start_position=answer_start_position,
             answer_end_position=answer_end_position,
@@ -328,7 +339,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
     tok_to_orig_index = []
     orig_to_tok_index = []
     all_doc_tokens = []
-    for (i, token) in enumerate(example.doc_tokens):
+    for (i, token) in enumerate(example.context_tokens):
       orig_to_tok_index.append(len(all_doc_tokens))
       sub_tokens = tokenizer.tokenize(token)
       for sub_token in sub_tokens:
@@ -342,7 +353,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
       tok_end_position = -1
     if is_training and not example.is_impossible:
       tok_start_position = orig_to_tok_index[example.answer_start_position]
-      if example.answer_end_position < len(example.doc_tokens) - 1:
+      if example.answer_end_position < len(example.context_tokens) - 1:
         tok_end_position = orig_to_tok_index[example.answer_end_position + 1] - 1
       else:
         tok_end_position = len(all_doc_tokens) - 1
@@ -842,7 +853,7 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
         tok_tokens = feature.tokens[pred.start_index:(pred.end_index + 1)]
         orig_doc_start = feature.token_to_orig_map[pred.start_index]
         orig_doc_end = feature.token_to_orig_map[pred.end_index]
-        orig_tokens = example.doc_tokens[orig_doc_start:(orig_doc_end + 1)]
+        orig_tokens = example.context_tokens[orig_doc_start:(orig_doc_end + 1)]
         tok_text = " ".join(tok_tokens)
 
         # De-tokenize WordPieces that have been split off.
