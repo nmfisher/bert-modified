@@ -596,6 +596,9 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
   seq_length = final_hidden_shape[1]
   hidden_size = final_hidden_shape[2]
 
+
+  final_hidden_matrix = tf.reshape(final_hidden,
+                                   [batch_size * seq_length, hidden_size])
   output_weights = tf.get_variable(
       "cls/squad/output_weights", [2, hidden_size],
       initializer=tf.truncated_normal_initializer(stddev=0.02))
@@ -603,21 +606,28 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
   output_bias = tf.get_variable(
       "cls/squad/output_bias", [2], initializer=tf.zeros_initializer())
 
+  
+  component_weights = tf.get_variable("cls/squad/component_weights", [1,hidden_size],
+      initializer=tf.truncated_normal_initializer(stddev=0.02))
 
-
-  final_hidden_matrix = tf.reshape(final_hidden,
-                                   [batch_size * seq_length, hidden_size])
+#  component_bias = tf.get_variable(
+#      "cls/squad/component_bias", [2], initializer=tf.zeros_initializer())
 
   # component_mask is [batch_size, seq_length]
-  component_mask = tf.cast(tf.reshape(component_mask, [batch_size * seq_length,1]), tf.float32)
-  print(final_hidden_matrix)
+  component_mask = tf.reshape(component_mask, [batch_size*seq_length,1])
+  component_mask = tf.cast(component_mask, tf.float32)
+  component_mask = tf.matmul(component_mask,component_weights)
   print(component_mask)
-  final_hidden_matrix = tf.multiply(component_mask, final_hidden_matrix)
-  print(final_hidden_matrix)
+ # component_mask = tf.nn.bias_add(component_mask, component_bias)
+  print(component_mask)
+  final_hidden_matrix = tf.math.add(final_hidden_matrix, component_mask)
+
   logits = tf.matmul(final_hidden_matrix, output_weights, transpose_b=True)
   logits = tf.nn.bias_add(logits, output_bias)
 
   logits = tf.reshape(logits, [batch_size, seq_length, 2])
+
+
   logits = tf.transpose(logits, [2, 0, 1])
 
   unstacked_logits = tf.unstack(logits, axis=0)
