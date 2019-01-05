@@ -1187,13 +1187,10 @@ def main(_):
   if FLAGS.do_train:
     # We write to a temporary file to avoid storing very large constant tensors
     # in memory.
-    filename = os.path.join(FLAGS.output_dir, "train.tf_record")
-    if os.path.isfile(os.path.join(FLAGS.output_dir, "train.tf_record")) is not True:
-      train_writer = FeatureWriter(
-        filename=filename,
+    train_writer = FeatureWriter(
+        filename=os.path.join(FLAGS.output_dir, "train.tf_record"),
         is_training=True)
-
-      convert_examples_to_features(
+    convert_examples_to_features(
         examples=train_examples,
         tokenizer=tokenizer,
         max_seq_length=FLAGS.max_seq_length,
@@ -1201,17 +1198,17 @@ def main(_):
         max_query_length=FLAGS.max_query_length,
         is_training=True,
         output_fn=train_writer.process_feature)
-      train_writer.close()
+    train_writer.close()
 
     tf.logging.info("***** Running training *****")
     tf.logging.info("  Num orig examples = %d", len(train_examples))
-    #tf.logging.info("  Num split examples = %d", train_writer.num_features)
+    tf.logging.info("  Num split examples = %d", train_writer.num_features)
     tf.logging.info("  Batch size = %d", FLAGS.train_batch_size)
     tf.logging.info("  Num steps = %d", num_train_steps)
     del train_examples
 
     train_input_fn = input_fn_builder(
-        input_file=filename,
+        input_file=train_writer.filename,
         seq_length=FLAGS.max_seq_length,
         is_training=True,
         drop_remainder=True)
