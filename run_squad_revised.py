@@ -41,8 +41,7 @@ flags.DEFINE_string(
 
 flags.DEFINE_string("vocab_file", None,
                     "The vocabulary file that the BERT model was trained on.")
-flags.DEFINE_string("squad_ckpt", None,
-                    "The metagraph file of the default BERT-Squad fine tuning model");
+
 flags.DEFINE_string(
     "output_dir", None,
     "The output directory where the model checkpoints will be written.")
@@ -419,7 +418,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
 
       # The mask has 1 for the component in the question we want to attend to, and 0 elsewhere
       input_mask = [1] * len(input_ids)
-      component_mask = [1 if i >= example.question_start_position and i <= example.question_end_position else 0 for i in range(len(input_ids))]
+      component_mask = [1 if i >= example.question_start_position and i <= example.question_end_position else 0.00001 for i in range(len(input_ids))]
       # Zero-pad up to the sequence length.
       while len(input_ids) < max_seq_length:
         input_ids.append(0)
@@ -579,7 +578,7 @@ def _check_is_max_context(doc_spans, cur_span_index, position):
 
 
 def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
-                 use_one_hot_embeddings, component_mask, squad_ckpt=None):
+                 use_one_hot_embeddings, component_mask):
   """Creates a classification model."""
   model = modeling.BertModel(
       config=bert_config,
@@ -606,28 +605,23 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
 
   output_bias = tf.get_variable(
       "cls/squad/output_bias", [2], initializer=tf.zeros_initializer())
-  
-  sess = tf.Session()
 
-  if squad_ckpt is not None:
-    new_saver = tf.train.Saver([output_weights, output_bias])
-    with sess.as_default():
-      new_saver.restore(sess, tf.train.latest_checkpoint(os.path.dirname(squad_ckpt)))
-      #tf.assign(output_weights, tf.get_variable("cls/squad/output_weights"))
-      #tf.assign(output_bias, tf.get_variable("cls/squad/output_bias"))
-      print(output_weights.eval())
-
-  print(output_weights.eval(session=sess))
   
+  component_weights = tf.get_variable("cls/squad/component_weights", [1,hidden_size],
+      initializer=tf.truncated_normal_initializer(stddev=0.02))
+
+#  component_bias = tf.get_variable(
+#      "cls/squad/component_bias", [2], initializer=tf.zeros_initializer())
+
   # component_mask is [batch_size, seq_length]
   component_mask = tf.reshape(component_mask, [batch_size*seq_length,1])
   component_mask = tf.cast(component_mask, tf.float32)
-  component_mask = tf.layers.dense(component_mask,hidden_size)
+  component_mask = tf.matmul(component_mask,component_weights)
   print(component_mask)
  # component_mask = tf.nn.bias_add(component_mask, component_bias)
   print(component_mask)
-  final_hidden_matrix = tf.math.multiply(final_hidden_matrix, component_mask)
-  
+  final_hidden_matrix = tf.math.add(final_hidden_matrix, component_mask)
+
   logits = tf.matmul(final_hidden_matrix, output_weights, transpose_b=True)
   logits = tf.nn.bias_add(logits, output_bias)
 
@@ -645,8 +639,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
 
 def model_fn_builder(bert_config, init_checkpoint, learning_rate,
                      num_train_steps, num_warmup_steps, use_tpu,
-                     use_one_hot_embeddings,
-                      squad_ckpt=None):
+                     use_one_hot_embeddings):
   """Returns `model_fn` closure for TPUEstimator."""
 
   def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
@@ -671,8 +664,7 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
         input_mask=input_mask,
         segment_ids=segment_ids,
         use_one_hot_embeddings=use_one_hot_embeddings,
-        component_mask=component_mask,
-        squad_ckpt=squad_ckpt)
+        component_mask=component_mask)
 
     tvars = tf.trainable_variables()
 
@@ -753,7 +745,7 @@ def input_fn_builder(input_file, seq_length, is_training, drop_remainder):
       "unique_ids": tf.FixedLenFeature([], tf.int64),
       "input_ids": tf.FixedLenFeature([seq_length], tf.int64),
       "input_mask": tf.FixedLenFeature([seq_length], tf.int64),
-      "component_mask":tf.FixedLenFeature([seq_length], tf.int64),
+      "component_mask":tf.FixedLenFeature([seq_length], tf.float32),
       "segment_ids": tf.FixedLenFeature([seq_length], tf.int64),
   }
 
@@ -1136,11 +1128,16 @@ class FeatureWriter(object):
           int64_list=tf.train.Int64List(value=list(values)))
       return feature
 
+    def create_float_feature(values):
+      feature = tf.train.Feature(
+          float_list=tf.train.FloatList(value=list(values)))
+      return feature
+
     features = collections.OrderedDict()
     features["unique_ids"] = create_int_feature([feature.unique_id])
     features["input_ids"] = create_int_feature(feature.input_ids)
     features["input_mask"] = create_int_feature(feature.input_mask)
-    features["component_mask"] = create_int_feature(feature.component_mask)
+    features["component_mask"] = create_float_feature(feature.component_mask)
     features["segment_ids"] = create_int_feature(feature.segment_ids)
 
     if self.is_training:
@@ -1237,8 +1234,7 @@ def main(_):
       num_train_steps=num_train_steps,
       num_warmup_steps=num_warmup_steps,
       use_tpu=FLAGS.use_tpu,
-      use_one_hot_embeddings=FLAGS.use_tpu,
-      squad_ckpt=FLAGS.squad_ckpt)
+      use_one_hot_embeddings=FLAGS.use_tpu)
 
   # If TPU is not available, this will fall back to normal Estimator on CPU
   # or GPU.
