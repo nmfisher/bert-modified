@@ -626,8 +626,8 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
   print(component_mask)
  # component_mask = tf.nn.bias_add(component_mask, component_bias)
   print(component_mask)
-  final_hidden_matrix = tf.math.add(final_hidden_matrix, component_mask)
-
+  final_hidden_matrix = tf.math.multiply(final_hidden_matrix, component_mask)
+  
   logits = tf.matmul(final_hidden_matrix, output_weights, transpose_b=True)
   logits = tf.nn.bias_add(logits, output_bias)
 
