@@ -28,6 +28,7 @@ import optimization
 import tokenization
 import six
 import tensorflow as tf
+import sys
 
 flags = tf.flags
 
@@ -83,6 +84,10 @@ flags.DEFINE_integer(
 flags.DEFINE_bool("do_train", False, "Whether to run training.")
 
 flags.DEFINE_bool("do_predict", False, "Whether to run eval on the dev set.")
+
+flags.DEFINE_bool("do_export", False, "Whether to export the model")
+
+flags.DEFINE_string("export_dir", None, "The directory to export the model")
 
 flags.DEFINE_integer("train_batch_size", 32, "Total batch size for training.")
 
@@ -301,12 +306,13 @@ def read_squad_examples(input_file, is_training):
         if (len(qa["answers"]) != 1) and (not is_impossible):
           raise ValueError(
               "For training, each question should have exactly 1 answer.")
+        question_start_position, question_end_position = can_find(question_component_text, question_component_offset, len(question_component_text), question_tokens, question_char_to_word_offset)
         if not is_impossible:
           answer = qa["answers"][0]
           orig_answer_text = answer["text"]
           answer_offset = answer["answer_start"]
           answer_start_position, answer_end_position = can_find(answer["text"], answer["answer_start"], len(answer["text"]), context_tokens, context_char_to_word_offset)
-          question_start_position, question_end_position = can_find(question_component_text, question_component_offset, len(question_component_text), question_tokens, question_char_to_word_offset)
+
           if answer_start_position is None or question_start_position is None:
             continue
         else:
@@ -420,26 +426,24 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
       # The mask has 1 for the component in the question we want to attend to, and 0 elsewhere
       input_mask = [1] * len(input_ids)
       def mask(index):
-        print(sep_id)
-        print(input_ids.index(sep_id))
         if i >= example.question_start_position and i <= example.question_end_position:
           return 1
         elif i >= input_ids.index(sep_id):
           return 1
         else: 
           return 0
-      component_mask = [mask(i) for i in range(len(input_ids))]
+      #component_mask = [mask(i) for i in range(len(input_ids))]
       # Zero-pad up to the sequence length.
       while len(input_ids) < max_seq_length:
         input_ids.append(0)
         input_mask.append(0)
         segment_ids.append(0)
-        component_mask.append(0)
+        #component_mask.append(0)
 
       assert len(input_ids) == max_seq_length
       assert len(input_mask) == max_seq_length
       assert len(segment_ids) == max_seq_length
-      assert len(component_mask) == max_seq_length
+#      assert len(component_mask) == max_seq_length
 
       start_position = None
       end_position = None
@@ -479,8 +483,8 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
         tf.logging.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
         tf.logging.info(
             "input_mask: %s" % " ".join([str(x) for x in input_mask]))
-        tf.logging.info(
-            "component_mask: %s" % " ".join([str(x) for x in component_mask]))
+#        tf.logging.info(
+#            "component_mask: %s" % " ".join([str(x) for x in component_mask]))
         tf.logging.info(
             "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
         if is_training and example.is_impossible:
@@ -501,7 +505,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
           token_is_max_context=token_is_max_context,
           input_ids=input_ids,
           input_mask=input_mask,
-          component_mask=component_mask,
+          #component_mask=component_mask,
           segment_ids=segment_ids,
           start_position=start_position,
           end_position=end_position,
@@ -588,7 +592,9 @@ def _check_is_max_context(doc_spans, cur_span_index, position):
 
 
 def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
-                 use_one_hot_embeddings, component_mask, squad_ckpt=None):
+                 use_one_hot_embeddings, 
+    #             component_mask,
+                 squad_ckpt=None):
   """Creates a classification model."""
   model = modeling.BertModel(
       config=bert_config,
@@ -605,11 +611,11 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
   batch_size = final_hidden_shape[0]
   seq_length = final_hidden_shape[1]
   hidden_size = final_hidden_shape[2]
-  component_mask = tf.reshape(component_mask, [batch_size,seq_length,1])
-  component_mask = tf.cast(component_mask,tf.float32)
-  component_mask = tf.tile(component_mask, [1,1,hidden_size])
+  #component_mask = tf.reshape(component_mask, [batch_size,seq_length,1])
+  #component_mask = tf.cast(component_mask,tf.float32)
+  #component_mask = tf.tile(component_mask, [1,1,hidden_size])
 
-  final_hidden = tf.math.multiply(final_hidden, component_mask)
+  #final_hidden = tf.math.multiply(final_hidden, component_mask)
   final_hidden_matrix = tf.reshape(final_hidden,
                                    [batch_size * seq_length, hidden_size])
   output_weights = tf.get_variable(
@@ -665,10 +671,10 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
     for name in sorted(features.keys()):
       tf.logging.info("  name = %s, shape = %s" % (name, features[name].shape))
 
-    unique_ids = features["unique_ids"]
+    #unique_ids = features["unique_ids"]
     input_ids = features["input_ids"]
     input_mask = features["input_mask"]
-    component_mask = features["component_mask"]
+    #component_mask = features["component_mask"]
     segment_ids = features["segment_ids"]
 
     is_training = (mode == tf.estimator.ModeKeys.TRAIN)
@@ -680,7 +686,7 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
         input_mask=input_mask,
         segment_ids=segment_ids,
         use_one_hot_embeddings=use_one_hot_embeddings,
-        component_mask=component_mask,
+        #component_mask=component_mask,
         squad_ckpt=squad_ckpt)
 
     tvars = tf.trainable_variables()
@@ -740,7 +746,7 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
 
     elif mode == tf.estimator.ModeKeys.PREDICT:
       predictions = {
-          "unique_ids": unique_ids,
+          #"unique_ids": unique_ids,
           "start_logits": start_logits,
           "end_logits": end_logits,
       }
@@ -759,10 +765,10 @@ def input_fn_builder(input_file, seq_length, is_training, drop_remainder):
   """Creates an `input_fn` closure to be passed to TPUEstimator."""
 
   name_to_features = {
-      "unique_ids": tf.FixedLenFeature([], tf.int64),
+#      "unique_ids": tf.FixedLenFeature([], tf.int64),
       "input_ids": tf.FixedLenFeature([seq_length], tf.int64),
       "input_mask": tf.FixedLenFeature([seq_length], tf.int64),
-      "component_mask":tf.FixedLenFeature([seq_length], tf.int64),
+      #"component_mask":tf.FixedLenFeature([seq_length], tf.int64),
       "segment_ids": tf.FixedLenFeature([seq_length], tf.int64),
   }
 
@@ -1146,10 +1152,10 @@ class FeatureWriter(object):
       return feature
 
     features = collections.OrderedDict()
-    features["unique_ids"] = create_int_feature([feature.unique_id])
+#    features["unique_ids"] = create_int_feature([feature.unique_id])
     features["input_ids"] = create_int_feature(feature.input_ids)
     features["input_mask"] = create_int_feature(feature.input_mask)
-    features["component_mask"] = create_int_feature(feature.component_mask)
+#    features["component_mask"] = create_int_feature(feature.component_mask)
     features["segment_ids"] = create_int_feature(feature.segment_ids)
 
     if self.is_training:
@@ -1172,7 +1178,7 @@ def validate_flags_or_throw(bert_config):
   tokenization.validate_case_matches_checkpoint(FLAGS.do_lower_case,
                                                 FLAGS.init_checkpoint)
 
-  if not FLAGS.do_train and not FLAGS.do_predict:
+  if not FLAGS.do_train and not FLAGS.do_predict and not FLAGS.do_export:
     raise ValueError("At least one of `do_train` or `do_predict` must be True.")
 
   if FLAGS.do_train:
@@ -1258,6 +1264,28 @@ def main(_):
       train_batch_size=FLAGS.train_batch_size,
       predict_batch_size=FLAGS.predict_batch_size)
 
+  if FLAGS.do_export:
+    def serving_input_fn():
+      input_ids = tf.placeholder(tf.int32, [None, FLAGS.max_seq_length], name='input_ids')
+      input_mask = tf.placeholder(tf.int32, [None, FLAGS.max_seq_length], name='input_mask')
+      segment_ids = tf.placeholder(tf.int32, [None, FLAGS.max_seq_length], name='segment_ids')
+#      unique_ids = tf.placeholder(tf.int32, [None], name='unique_ids')
+#      component_mask = tf.placeholder(tf.int32, [None], name='component_mask')
+
+      input_fn = tf.estimator.export.build_raw_serving_input_receiver_fn({
+          'input_ids': input_ids,
+          'input_mask': input_mask,
+          'segment_ids': segment_ids,
+          #'unique_ids': unique_ids,
+          #'component_mask':component_mask,
+      })()
+      return input_fn
+    estimator._export_to_tpu = False
+    estimator.export_savedmodel(FLAGS.export_dir, serving_input_fn)  
+    print("Model exported to " + FLAGS.export_dir)
+    sys.exit(0);
+    
+
   if FLAGS.do_train:
     # We write to a temporary file to avoid storing very large constant tensors
     # in memory.
@@ -1332,9 +1360,11 @@ def main(_):
     all_results = []
     for result in estimator.predict(
         predict_input_fn, yield_single_examples=True):
+      print(result)
       if len(all_results) % 1000 == 0:
         tf.logging.info("Processing example: %d" % (len(all_results)))
-      unique_id = int(result["unique_ids"])
+#      unique_id = int(result["unique_ids"])
+      #unique_id = int(result["unique_ids"]) if "unique_ids" in result else None
       start_logits = [float(x) for x in result["start_logits"].flat]
       end_logits = [float(x) for x in result["end_logits"].flat]
       all_results.append(
