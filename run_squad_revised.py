@@ -218,7 +218,7 @@ class InputFeatures(object):
                token_is_max_context,
                input_ids,
                input_mask,
-               component_mask,
+               #component_mask,
                segment_ids,
                start_position=None,
                end_position=None,
@@ -231,7 +231,7 @@ class InputFeatures(object):
     self.token_is_max_context = token_is_max_context
     self.input_ids = input_ids
     self.input_mask = input_mask
-    self.component_mask = component_mask
+    #self.component_mask = component_mask
     self.segment_ids = segment_ids
     self.start_position = start_position
     self.end_position = end_position
@@ -671,7 +671,7 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
     for name in sorted(features.keys()):
       tf.logging.info("  name = %s, shape = %s" % (name, features[name].shape))
 
-    #unique_ids = features["unique_ids"]
+    unique_ids = features["unique_ids"]
     input_ids = features["input_ids"]
     input_mask = features["input_mask"]
     #component_mask = features["component_mask"]
@@ -746,7 +746,7 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
 
     elif mode == tf.estimator.ModeKeys.PREDICT:
       predictions = {
-          #"unique_ids": unique_ids,
+          "unique_ids": unique_ids,
           "start_logits": start_logits,
           "end_logits": end_logits,
       }
@@ -765,7 +765,7 @@ def input_fn_builder(input_file, seq_length, is_training, drop_remainder):
   """Creates an `input_fn` closure to be passed to TPUEstimator."""
 
   name_to_features = {
-#      "unique_ids": tf.FixedLenFeature([], tf.int64),
+      "unique_ids": tf.FixedLenFeature([], tf.int64),
       "input_ids": tf.FixedLenFeature([seq_length], tf.int64),
       "input_mask": tf.FixedLenFeature([seq_length], tf.int64),
       #"component_mask":tf.FixedLenFeature([seq_length], tf.int64),
@@ -813,7 +813,9 @@ def input_fn_builder(input_file, seq_length, is_training, drop_remainder):
 
 
 RawResult = collections.namedtuple("RawResult",
-                                   ["unique_id", "start_logits", "end_logits"])
+                                   [
+                    "unique_id", 
+                    "start_logits", "end_logits"])
 
 
 def write_predictions(all_examples, all_features, all_results, n_best_size,
@@ -1152,7 +1154,7 @@ class FeatureWriter(object):
       return feature
 
     features = collections.OrderedDict()
-#    features["unique_ids"] = create_int_feature([feature.unique_id])
+    features["unique_ids"] = create_int_feature([feature.unique_id])
     features["input_ids"] = create_int_feature(feature.input_ids)
     features["input_mask"] = create_int_feature(feature.input_mask)
 #    features["component_mask"] = create_int_feature(feature.component_mask)
@@ -1269,14 +1271,14 @@ def main(_):
       input_ids = tf.placeholder(tf.int32, [None, FLAGS.max_seq_length], name='input_ids')
       input_mask = tf.placeholder(tf.int32, [None, FLAGS.max_seq_length], name='input_mask')
       segment_ids = tf.placeholder(tf.int32, [None, FLAGS.max_seq_length], name='segment_ids')
-#      unique_ids = tf.placeholder(tf.int32, [None], name='unique_ids')
+      unique_ids = tf.placeholder(tf.int32, [None], name='unique_ids')
 #      component_mask = tf.placeholder(tf.int32, [None], name='component_mask')
 
       input_fn = tf.estimator.export.build_raw_serving_input_receiver_fn({
           'input_ids': input_ids,
           'input_mask': input_mask,
           'segment_ids': segment_ids,
-          #'unique_ids': unique_ids,
+          'unique_ids': unique_ids,
           #'component_mask':component_mask,
       })()
       return input_fn
@@ -1360,11 +1362,9 @@ def main(_):
     all_results = []
     for result in estimator.predict(
         predict_input_fn, yield_single_examples=True):
-      print(result)
       if len(all_results) % 1000 == 0:
         tf.logging.info("Processing example: %d" % (len(all_results)))
-#      unique_id = int(result["unique_ids"])
-      #unique_id = int(result["unique_ids"]) if "unique_ids" in result else None
+      unique_id = int(result["unique_ids"])
       start_logits = [float(x) for x in result["start_logits"].flat]
       end_logits = [float(x) for x in result["end_logits"].flat]
       all_results.append(
