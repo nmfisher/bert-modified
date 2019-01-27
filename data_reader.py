@@ -29,12 +29,14 @@ class UtteranceExample(object):
                query_tokens,
                answer_start_position=None,
                answer_end_position=None,
+              answer_text=None,
                is_impossible=False):
     self.id = id
     self.query_tokens = query_tokens
     self.utterance_tokens = utterance_tokens
     self.answer_start_position = answer_start_position
     self.answer_end_position = answer_end_position
+    self.answer_text = answer_text
     self.is_impossible = is_impossible
 
   def __str__(self):
@@ -112,7 +114,7 @@ def read_csv_examples(input_file, is_training):
                 else:
                     answer_start_position = -1
                     answer_end_position = -1
-                    orig_answer_text = ""
+                    answer_text = ""
                     if answer_start_position is None:
                         print(paragraph)
                         raise Exception()
@@ -122,6 +124,7 @@ def read_csv_examples(input_file, is_training):
                 query_tokens=query_tokens,
                 answer_start_position=answer_start_position,
                 answer_end_position=answer_end_position,
+                answer_text=answer_text,
                 is_impossible=answer_start_position==-1)
             examples.append(example)
             print("EXAMPLES {0}".format(len(examples)))
