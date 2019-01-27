@@ -18,6 +18,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from data_reader import read_csv_examples
 import collections
 import json
 import math
@@ -160,49 +161,6 @@ flags.DEFINE_float(
     "If null_score - best_non_null is greater than the threshold predict null.")
 
 
-class SquadExample(object):
-  """A single training/test example for simple sequence classification.
-
-     For examples without an answer, the start and end position are -1.
-  """
-
-  def __init__(self,
-               id,
-               intent_description_tokens,
-               utterance_tokens,
-               is_match,
-               slot_description_tokens,
-               slot_match_start_position=None,
-               slot_match_end_position=None,
-               answer_end_position=None,
-               is_impossible=False):
-    self.id = id
-    self.intent_description_tokens = intent_description_tokens
-    self.utterance_tokens = utterance_tokens
-    self.is_match = is_match
-    self.slot_description_tokens = slot_description_tokens
-    self.slot_match_start_position = slot_match_start_position
-    self.slot_match_end_position = slot_match_end_position
-    self.is_impossible = is_impossible
-
-  def __str__(self):
-    return self.__repr__()
-
-  def __repr__(self):
-    s = ""
-    s += "qas_id: %s" % (tokenization.printable_text(self.qas_id))
-    s += ", intent_description: %s" % (
-        tokenization.printable_text(self.intent_description))
-    s += ", utterance_text: [%s]" % (" ".join(self.utterance_text))
-    if self.answer_start_position:
-      s += ", answer_start_position: %d" % (self.answer_start_position)
-    if self.answer_start_position:
-      s += ", end_position: %d" % (self.answer_end_position)
-    if self.is_impossible:
-      s += ", is_impossible: %r" % (self.is_impossible)
-    return s
-
-
 class InputFeatures(object):
   """A single set of features of data."""
 
@@ -233,85 +191,6 @@ class InputFeatures(object):
     self.end_position = end_position
     self.is_impossible = is_impossible
 
-
-def read_squad_examples(input_file, is_training):
-  """Read a SQuAD json file into a list of SquadExample."""
-  with tf.gfile.Open(input_file, "r") as reader:
-    input_data = json.load(reader)["data"]
-
-  def is_whitespace(c):
-    if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
-      return True
-    return False
-
-  def build_char_to_word(text):
-      prev_is_whitespace = True
-      char_to_word_offset = []
-      tokens = []
-      for c in text:
-        if is_whitespace(c):
-          prev_is_whitespace = True
-        else:
-          if prev_is_whitespace:
-            tokens.append(c)
-          else:
-            tokens[-1] += c
-          prev_is_whitespace = False
-        char_to_word_offset.append(len(tokens) - 1)
-      return tokens, char_to_word_offset
-
-
-  examples = []
-  for entry in input_data:
-    intent_description_tokens, intent_description_char_to_word_offset = build_char_to_word(entry["intent_description"])
-    utterance_tokens, utterance_char_to_word_offset = build_char_to_word(entry["utterance"])
-    slot_description_tokens, slot_description_char_to_word_offset = build_char_to_word(entry["slot_description"])
-
-    def can_find(text, offset, length, tokens, char_to_word_offset):
-        start_position = char_to_word_offset[offset]
-        end_position = char_to_word_offset[offset + length - 1]
-          # Only add answers where the text can be exactly recovered from the
-          # document. If this CAN'T happen it's likely due to weird Unicode
-          # stuff so we will just skip the example.
-          #
-          # Note that this means for training mode, every example is NOT
-          # guaranteed to be preserved.
-        actual_text = " ".join(
-              tokens[start_position:(end_position + 1)])
-        cleaned_answer_text = " ".join(
-              tokenization.whitespace_tokenize(text))
-        if actual_text.find(cleaned_answer_text) == -1:
-            tf.logging.warning("Could not find answer: '%s' vs. '%s'",
-                               actual_text, cleaned_answer_text)
-            return None,None
-        return start_position,end_position
-
-  if not is_impossible:
-    answer_start_position, answer_end_position = can_find(entry["slot_match_text"], entry["slot_match_start"], entry["slot_match_end"] - entry["slot_match_start"], utterance_tokens, utterance_char_to_word_offset)
-    if answer_start_position is None or question_start_position is None:
-      continue
-  else:
-    answer_start_position = -1
-    answer_end_position = -1
-    orig_answer_text = ""
-  if answer_start_position is None:
-    print(paragraph)
-    raise Exception()
-        
-  example = SquadExample(
-            id=id,
-            intent_description_tokens=intent_description_tokens,
-            utterance_tokens=utterance_tokens,
-            is_match=entry["is_match"],
-            slot_description_tokens=slot_description_tokens,
-            slot_match_start_position=slot_match_start_position,
-            slot_match_end_position=slot_match_end_position,
-            is_impossible=entry["is_impossible"])
-    examples.append(example)
-  print("EXAMPLES {0}".format(len(examples)))
-  return examples
-
-
 def convert_examples_to_features(examples, tokenizer, max_seq_length,
                                  doc_stride, max_query_length, is_training,
                                  output_fn):
@@ -320,19 +199,17 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
   unique_id = 1000000000
 
   for (example_index, example) in enumerate(examples):
-    intent_description_tokens = tokenizer.tokenize(example.intent_description_tokens)
-    utterance_tokens = tokenizer.tokenize(example.utterance_tokens)
-    slot_description_tokens = tokenizer.tokenize(example.slot_desription_tokens)
-
+    query_tokens = tokenizer.tokenize(example.query_text)
+    
     tok_to_orig_index = []
     orig_to_tok_index = []
     all_utterance_tokens = []
-    for (i, token) in enumerate(example.intent_description_tokens):
-      orig_to_tok_index.append(len(all_doc_tokens))
+    for (i, token) in enumerate(example.utterance_tokens):
+      orig_to_tok_index.append(len(all_utterance_tokens))
       sub_tokens = tokenizer.tokenize(token)
       for sub_token in sub_tokens:
         tok_to_orig_index.append(i)
-        all_doc_tokens.append(sub_token)
+        all_utterance_tokens.append(sub_token)
 
     tok_start_position = None
     tok_end_position = None
@@ -340,14 +217,14 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
       tok_start_position = -1
       tok_end_position = -1
     if is_training and not example.is_impossible:
-      tok_start_position = orig_to_tok_index[example.slot_match_start_position]
-      if example.slot_match_end_position < len(example.utterance_tokens) - 1:
-        tok_end_position = orig_to_tok_index[example.slot_match_end_position + 1] - 1
+      tok_start_position = orig_to_tok_index[example.answer_start_position]
+      if example.answer_end_position < len(example.utterance_tokens) - 1:
+        tok_end_position = orig_to_tok_index[example.answer_end_position + 1] - 1
       else:
-        tok_end_position = len(all_doc_tokens) - 1
+        tok_end_position = len(all_utterance_tokens) - 1
       (tok_start_position, tok_end_position) = _improve_answer_span(
-          all_doc_tokens, tok_start_position, tok_end_position, tokenizer,
-          example.orig_answer_text)
+          all_utterance_tokens, tok_start_position, tok_end_position, tokenizer,
+          example.answer_text)
 
     # The -3 accounts for [CLS], [SEP] and [SEP]
     max_tokens_for_doc = max_seq_length - len(query_tokens) - 3
@@ -359,12 +236,12 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
         "DocSpan", ["start", "length"])
     doc_spans = []
     start_offset = 0
-    while start_offset < len(all_doc_tokens):
-      length = len(all_doc_tokens) - start_offset
+    while start_offset < len(all_utterance_tokens):
+      length = len(all_utterance_tokens) - start_offset
       if length > max_tokens_for_doc:
         length = max_tokens_for_doc
       doc_spans.append(_DocSpan(start=start_offset, length=length))
-      if start_offset + length == len(all_doc_tokens):
+      if start_offset + length == len(all_utterance_tokens):
         break
       start_offset += min(length, doc_stride)
 
@@ -388,34 +265,33 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
         is_max_context = _check_is_max_context(doc_spans, doc_span_index,
                                                split_token_index)
         token_is_max_context[len(tokens)] = is_max_context
-        tokens.append(all_doc_tokens[split_token_index])
+        tokens.append(all_utterance_tokens[split_token_index])
         segment_ids.append(1)
       tokens.append("[SEP]")
       segment_ids.append(1)
 
       input_ids = tokenizer.convert_tokens_to_ids(tokens)
-      sep_id = tokenizer.convert_tokens_to_ids(["[SEP]"])[0]
-      # The mask has 1 for the component in the question we want to attend to, and 0 elsewhere
       input_mask = [1] * len(input_ids)
-      def mask(index):
-        if i >= example.question_start_position and i <= example.question_end_position:
-          return 1
-        elif i >= input_ids.index(sep_id):
-          return 1
-        else: 
-          return 0
-      #component_mask = [mask(i) for i in range(len(input_ids))]
+
       # Zero-pad up to the sequence length.
       while len(input_ids) < max_seq_length:
         input_ids.append(0)
         input_mask.append(0)
         segment_ids.append(0)
-        #component_mask.append(0)
+        
+        # The mask has 1 for real tokens and 0 for padding tokens. Only real
+      # tokens are attended to.
+      input_mask = [1] * len(input_ids)
+
+      # Zero-pad up to the sequence length.
+      while len(input_ids) < max_seq_length:
+        input_ids.append(0)
+        input_mask.append(0)
+        segment_ids.append(0)
 
       assert len(input_ids) == max_seq_length
       assert len(input_mask) == max_seq_length
       assert len(segment_ids) == max_seq_length
-#      assert len(component_mask) == max_seq_length
 
       start_position = None
       end_position = None
@@ -454,10 +330,6 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
         ]))
         tf.logging.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
         tf.logging.info(
-            "input_mask: %s" % " ".join([str(x) for x in input_mask]))
-#        tf.logging.info(
-#            "component_mask: %s" % " ".join([str(x) for x in component_mask]))
-        tf.logging.info(
             "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
         if is_training and example.is_impossible:
           tf.logging.info("impossible example")
@@ -477,7 +349,6 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
           token_is_max_context=token_is_max_context,
           input_ids=input_ids,
           input_mask=input_mask,
-          #component_mask=component_mask,
           segment_ids=segment_ids,
           start_position=start_position,
           end_position=end_position,
@@ -565,7 +436,6 @@ def _check_is_max_context(doc_spans, cur_span_index, position):
 
 def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
                  use_one_hot_embeddings, 
-    #             component_mask,
                  squad_ckpt=None):
   """Creates a classification model."""
   model = modeling.BertModel(
@@ -583,11 +453,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
   batch_size = final_hidden_shape[0]
   seq_length = final_hidden_shape[1]
   hidden_size = final_hidden_shape[2]
-  #component_mask = tf.reshape(component_mask, [batch_size,seq_length,1])
-  #component_mask = tf.cast(component_mask,tf.float32)
-  #component_mask = tf.tile(component_mask, [1,1,hidden_size])
 
-  #final_hidden = tf.math.multiply(final_hidden, component_mask)
   final_hidden_matrix = tf.reshape(final_hidden,
                                    [batch_size * seq_length, hidden_size])
   output_weights = tf.get_variable(
@@ -603,23 +469,13 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
     new_saver = tf.train.Saver([output_weights, output_bias])
     with sess.as_default():
       new_saver.restore(sess, tf.train.latest_checkpoint(os.path.dirname(squad_ckpt)))
-      #tf.assign(output_weights, tf.get_variable("cls/squad/output_weights"))
-      #tf.assign(output_bias, tf.get_variable("cls/squad/output_bias"))
       print(output_weights.eval())
     print(output_weights.eval(session=sess))
-  
-  # component_mask is [batch_size, seq_length]
-#  component_mask = tf.reshape(component_mask, [batch_size*seq_length,1])
-  #component_mask = tf.cast(component_mask, tf.float32)
-  #final_hidden_matrix = tf.add(final_hidden_matrix, component_mask)
-  #component_mask = tf.layers.dense(component_mask,hidden_size)
- # component_mask = tf.nn.bias_add(component_mask, component_bias)
    
   logits = tf.matmul(final_hidden_matrix, output_weights, transpose_b=True)
   logits = tf.nn.bias_add(logits, output_bias)
 
   logits = tf.reshape(logits, [batch_size, seq_length, 2])
-
 
   logits = tf.transpose(logits, [2, 0, 1])
 
@@ -646,7 +502,6 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
     unique_ids = features["unique_ids"]
     input_ids = features["input_ids"]
     input_mask = features["input_mask"]
-    #component_mask = features["component_mask"]
     segment_ids = features["segment_ids"]
 
     is_training = (mode == tf.estimator.ModeKeys.TRAIN)
@@ -658,7 +513,6 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
         input_mask=input_mask,
         segment_ids=segment_ids,
         use_one_hot_embeddings=use_one_hot_embeddings,
-        #component_mask=component_mask,
         squad_ckpt=squad_ckpt)
 
     tvars = tf.trainable_variables()
@@ -740,7 +594,6 @@ def input_fn_builder(input_file, seq_length, is_training, drop_remainder):
       "unique_ids": tf.FixedLenFeature([], tf.int64),
       "input_ids": tf.FixedLenFeature([seq_length], tf.int64),
       "input_mask": tf.FixedLenFeature([seq_length], tf.int64),
-      #"component_mask":tf.FixedLenFeature([seq_length], tf.int64),
       "segment_ids": tf.FixedLenFeature([seq_length], tf.int64),
   }
 
@@ -888,7 +741,7 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
         tok_tokens = feature.tokens[pred.start_index:(pred.end_index + 1)]
         orig_doc_start = feature.token_to_orig_map[pred.start_index]
         orig_doc_end = feature.token_to_orig_map[pred.end_index]
-        orig_tokens = example.context_tokens[orig_doc_start:(orig_doc_end + 1)]
+        orig_tokens = example.utterance_tokens[orig_doc_start:(orig_doc_end + 1)]
         tok_text = " ".join(tok_tokens)
 
         # De-tokenize WordPieces that have been split off.
@@ -952,18 +805,18 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
     assert len(nbest_json) >= 1
 
     if not FLAGS.version_2_with_negative:
-      all_predictions[example.qas_id] = nbest_json[0]["text"]
+      all_predictions[example.example_id] = nbest_json[0]["text"]
     else:
       # predict "" iff the null score - the score of best non-null > threshold
       score_diff = score_null - best_non_null_entry.start_logit - (
           best_non_null_entry.end_logit)
-      scores_diff_json[example.qas_id] = score_diff
+      scores_diff_json[example.example_id] = score_diff
       if score_diff > FLAGS.null_score_diff_threshold:
-        all_predictions[example.qas_id] = ""
+        all_predictions[example.example_id] = ""
       else:
-        all_predictions[example.qas_id] = best_non_null_entry.text
+        all_predictions[example.example_id] = best_non_null_entry.text
 
-    all_nbest_json[example.qas_id] = nbest_json
+    all_nbest_json[example.example_id] = nbest_json
 
   with tf.gfile.GFile(output_prediction_file, "w") as writer:
     writer.write(json.dumps(all_predictions, indent=4) + "\n")
@@ -1129,7 +982,6 @@ class FeatureWriter(object):
     features["unique_ids"] = create_int_feature([feature.unique_id])
     features["input_ids"] = create_int_feature(feature.input_ids)
     features["input_mask"] = create_int_feature(feature.input_mask)
-#    features["component_mask"] = create_int_feature(feature.component_mask)
     features["segment_ids"] = create_int_feature(feature.segment_ids)
 
     if self.is_training:
@@ -1208,7 +1060,7 @@ def main(_):
   num_train_steps = None
   num_warmup_steps = None
   if FLAGS.do_train:
-    train_examples = read_squad_examples(
+    train_examples = read_csv_examples(
         input_file=FLAGS.train_file, is_training=True)
     num_train_steps = int(
         len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
@@ -1294,7 +1146,7 @@ def main(_):
     estimator.train(input_fn=train_input_fn, max_steps=num_train_steps)
 
   if FLAGS.do_predict:
-    eval_examples = read_squad_examples(
+    eval_examples = read_csv_examples(
         input_file=FLAGS.predict_file, is_training=False)
 
     eval_writer = FeatureWriter(
